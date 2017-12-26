@@ -979,6 +979,10 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
         shared.Settings.RELOCATABLE = 1
         shared.Settings.PRECISE_I64_MATH = 1 # other might use precise math, we need to be able to print it
         assert not options.use_closure_compiler, 'cannot use closure compiler on shared modules'
+        # getMemory is used during startup of shared modules (to allocate their static memory)
+        shared.Settings.EXPORTED_RUNTIME_METHODS += [
+          'getMemory',
+        ]
 
       if shared.Settings.EMULATE_FUNCTION_POINTER_CASTS:
         shared.Settings.ALIASING_FUNCTION_POINTERS = 0
@@ -1091,6 +1095,25 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
         shared.Settings.FORCE_FILESYSTEM = 1 # proxying of utime requires the filesystem
       else:
         options.js_libraries.append(shared.path_from_root('src', 'library_pthread_stub.js'))
+
+      if shared.Settings.FORCE_FILESYSTEM:
+        # when the filesystem is forced, we export by default methods that filesystem usage
+        # may need, including filesystem usage from standalone file packager output (i.e.
+        # file packages not built together with emcc, but that are loaded at runtime
+        # separately, and they need emcc's output to contain the support they need)
+        shared.Settings.EXPORTED_RUNTIME_METHODS += [
+          'FS_createFolder',
+          'FS_createPath',
+          'FS_createDataFile',
+          'FS_createPreloadedFile',
+          'FS_createLazyFile',
+          'FS_createLink',
+          'FS_createDevice',
+          'FS_unlink',
+          'getMemory',
+          'addRunDependency',
+          'removeRunDependency',
+        ]
 
       if shared.Settings.USE_PTHREADS:
         if shared.Settings.LINKABLE:
@@ -2609,8 +2632,8 @@ def generate_html(target, options, js_target, target_basename,
 
   # when script.inline isn't empty, add required helper functions such as tryParseAsDataURI
   if script.inline:
-    for file in ['src/arrayUtils.js', 'src/base64Utils.js']:
-      f = open(shared.path_from_root(file), 'r')
+    for file in ['arrayUtils.js', 'base64Utils.js', 'URIUtils.js']:
+      f = open(shared.path_from_root('src', file), 'r')
       script.inline = f.read() + script.inline
       f.close()
 

@@ -1563,7 +1563,10 @@ def process(filename):
   def test_emscripten_get_compiler_setting(self):
     test_path = path_from_root('tests', 'core', 'emscripten_get_compiler_setting')
     src, output = (test_path + s for s in ('.c', '.out'))
+    old = Settings.ASSERTIONS
+    Settings.ASSERTIONS = 1 # with assertions, a nice message is shown
     self.do_run(open(src).read(), 'You must build with -s RETAIN_COMPILER_SETTINGS=1')
+    Settings.ASSERTIONS = old
     Settings.RETAIN_COMPILER_SETTINGS = 1
     self.do_run(open(src).read(), open(output).read().replace('waka', EMSCRIPTEN_VERSION))
 
@@ -3257,13 +3260,13 @@ Module = {
         printf("main\n");
         EM_ASM({
           // make the function table sizes a non-power-of-two
-          Runtime.alignFunctionTables();
+          alignFunctionTables();
           Module['FUNCTION_TABLE_v'].push(0, 0, 0, 0, 0);
-          var newSize = Runtime.alignFunctionTables();
+          var newSize = alignFunctionTables();
           //Module.print('new size of function tables: ' + newSize);
           // when masked, the two function pointers 1 and 2 should not happen to fall back to the right place
           assert(((newSize+1) & 3) !== 1 || ((newSize+2) & 3) !== 2);
-          Runtime.loadDynamicLibrary('liblib.so');
+          loadDynamicLibrary('liblib.so');
         });
         volatilevoidfunc f;
         f = (volatilevoidfunc)left1;
@@ -3765,7 +3768,7 @@ Module = {
       extern int bsideg;
       int main() {
         EM_ASM({
-          Runtime.loadDynamicLibrary('third.js'); // hyper-dynamic! works at least for functions (and consts not used in same block)
+          loadDynamicLibrary('third.js'); // hyper-dynamic! works at least for functions (and consts not used in same block)
         });
         printf("sidef: %d, sideg: %d.\n", sidef(), sideg);
         printf("bsidef: %d.\n", bsidef());
@@ -4115,6 +4118,8 @@ Pass: 0.000012 0.000012''')
     elif '-O3' in self.emcc_args and not self.is_wasm():
       print('closure 2')
       self.emcc_args += ['--closure', '2'] # Use closure 2 here for some additional coverage
+
+    self.emcc_args += ['-s', 'FORCE_FILESYSTEM=1']
 
     print('base', self.emcc_args)
 
@@ -5966,6 +5971,9 @@ def process(filename):
       self.emcc_args += ['--closure', '1']
       self.do_run_in_out_file_test('tests', 'core', 'test_ccall', post_build=post)
 
+  def test_dyncall(self):
+    self.do_run_in_out_file_test('tests', 'core', 'dyncall')
+
   def test_getValue_setValue(self):
     # these used to be exported, but no longer are by default
     def test(output_prefix='', args=[]):
@@ -5984,6 +5992,51 @@ def process(filename):
     Settings.ASSERTIONS = 0
     # see that when we export them, things work on the module
     Settings.EXTRA_EXPORTED_RUNTIME_METHODS = ['getValue', 'setValue']
+    test()
+
+  def test_FS_exports(self):
+    # these used to be exported, but no longer are by default
+    for use_files in (0, 1):
+      print(use_files)
+      def test(output_prefix='', args=[]):
+        if use_files: args = args + ['-DUSE_FILES']
+        print(args)
+        old = self.emcc_args[:]
+        self.emcc_args += args
+        self.do_run(open(path_from_root('tests', 'core', 'FS_exports.cpp')).read(),
+                    (open(path_from_root('tests', 'core', 'FS_exports' + output_prefix + '.txt')).read(),
+                     open(path_from_root('tests', 'core', 'FS_exports' + output_prefix + '_2.txt')).read()))
+        self.emcc_args = old
+      # see that direct usage (not on module) works. we don't export, but the use
+      # keeps it alive through JSDCE
+      test(args=['-DDIRECT', '-s', 'FORCE_FILESYSTEM=1'])
+      # see that with assertions, we get a nice error message
+      Settings.EXTRA_EXPORTED_RUNTIME_METHODS = []
+      Settings.ASSERTIONS = 1
+      test('_assert')
+      Settings.ASSERTIONS = 0
+      # see that when we export them, things work on the module
+      Settings.EXTRA_EXPORTED_RUNTIME_METHODS = ['FS_createDataFile']
+      test(args=['-s', 'FORCE_FILESYSTEM=1'])
+
+  def test_legacy_exported_runtime_numbers(self):
+    # these used to be exported, but no longer are by default
+    def test(output_prefix='', args=[]):
+      old = self.emcc_args[:]
+      self.emcc_args += args
+      self.do_run(open(path_from_root('tests', 'core', 'legacy_exported_runtime_numbers.cpp')).read(),
+                  open(path_from_root('tests', 'core', 'legacy_exported_runtime_numbers' + output_prefix + '.txt')).read())
+      self.emcc_args = old
+    # see that direct usage (not on module) works. we don't export, but the use
+    # keeps it alive through JSDCE
+    test(args=['-DDIRECT'])
+    # see that with assertions, we get a nice error message
+    Settings.EXTRA_EXPORTED_RUNTIME_METHODS = []
+    Settings.ASSERTIONS = 1
+    test('_assert')
+    Settings.ASSERTIONS = 0
+    # see that when we export them, things work on the module
+    Settings.EXTRA_EXPORTED_RUNTIME_METHODS = ['ALLOC_DYNAMIC']
     test()
 
   @no_wasm_backend('DEAD_FUNCTIONS elimination is done by the JSOptimizer')
@@ -6250,8 +6303,8 @@ def process(filename):
 
     int main() {
       EM_ASM({
-        Runtime.getFuncWrapper($0, 'vi')(0);
-        Runtime.getFuncWrapper($1, 'vii')(0, 0);
+        getFuncWrapper($0, 'vi')(0);
+        getFuncWrapper($1, 'vii')(0, 0);
       }, func1, func2);
       return 0;
     }

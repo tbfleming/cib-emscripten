@@ -143,6 +143,9 @@ def parse_backend_output(backend_output, DEBUG):
   metadata_raw = backend_output[metadata_split+len(metadata_split_marker):]
   mem_init = backend_output[end_funcs+len(end_funcs_marker):metadata_split]
 
+  # we no longer use the "Runtime" object. TODO: stop emiting it in the backend
+  mem_init = mem_init.replace('Runtime.', '')
+
   try:
     #if DEBUG: print >> sys.stderr, "METAraw", metadata_raw
     metadata = json.loads(metadata_raw, object_pairs_hook=OrderedDict)
@@ -378,8 +381,6 @@ def create_module(function_table_sigs, metadata, settings,
 
   asm_end = create_asm_end(exports, settings)
 
-  runtime_library_overrides = create_runtime_library_overrides(settings)
-
   module = [
     asm_start,
     temp_float,
@@ -389,11 +390,11 @@ def create_module(function_table_sigs, metadata, settings,
     start_funcs_marker
   ] + runtime_funcs + funcs_js + ['\n  ',
     pre_tables, final_function_tables, asm_end,
-    '\n', receiving, ';\n', runtime_library_overrides]
+    '\n', receiving, ';\n']
 
   if settings['SIDE_MODULE']:
     module.append('''
-Runtime.registerFunctions(%(sigs)s, Module);
+parentModule['registerFunctions'](%(sigs)s, Module);
 ''' % { 'sigs': str(list(map(str, function_table_sigs))) })
 
   return module
@@ -564,7 +565,7 @@ def memory_and_global_initializers(pre, metadata, mem_init, settings):
                      mem_init=mem_init))
 
   if settings['SIDE_MODULE']:
-    pre = pre.replace('Runtime.GLOBAL_BASE', 'gb')
+    pre = pre.replace('GLOBAL_BASE', 'gb')
   if settings['SIDE_MODULE'] or settings['BINARYEN']:
     pre = pre.replace('{{{ STATIC_BUMP }}}', str(staticbump))
 
@@ -643,6 +644,13 @@ def get_exported_implemented_functions(all_exported_functions, all_implemented, 
       funcs += ['setTempRet0', 'getTempRet0']
     if not (settings['BINARYEN'] and settings['SIDE_MODULE']):
       funcs += ['setThrew']
+    if settings['EMTERPRETIFY']:
+      funcs += ['emterpret']
+      if settings['EMTERPRETIFY_ASYNC']:
+        funcs += ['setAsyncState', 'emtStackSave', 'emtStackRestore']
+    if settings['ASYNCIFY']:
+      funcs += ['setAsync']
+
   return sorted(set(funcs))
 
 
@@ -651,8 +659,8 @@ def get_implemented_functions(metadata):
 
 def proxy_debug_print(call_type, settings):
   if shared.Settings.PTHREADS_DEBUG:
-    if call_type == 'sync_on_main_thread_': return 'Runtime.warnOnce("sync proxying function " + code);';
-    elif call_type == 'async_on_main_thread_': return 'Runtime.warnOnce("async proxying function " + code);';
+    if call_type == 'sync_on_main_thread_': return 'warnOnce("sync proxying function " + code);';
+    elif call_type == 'async_on_main_thread_': return 'warnOnce("async proxying function " + code);';
   return ''
 
 def include_asm_consts(pre, forwarded_json, metadata, settings):
@@ -1151,9 +1159,8 @@ def create_asm_setup(debug_tables, function_table_data, metadata, settings):
     if not settings['EMULATED_FUNCTION_POINTERS']:
       asm_setup += "\nModule['wasmMaxTableSize'] = %d;\n" % table_total_size
   if settings['RELOCATABLE']:
-    asm_setup += 'var setTempRet0 = Runtime.setTempRet0, getTempRet0 = Runtime.getTempRet0;\n'
     if not settings['SIDE_MODULE']:
-      asm_setup += 'var gb = Runtime.GLOBAL_BASE, fb = 0;\n'
+      asm_setup += 'var gb = GLOBAL_BASE, fb = 0;\n'
     side = 'parent' if settings['SIDE_MODULE'] else ''
     def check(extern):
       if settings['ASSERTIONS']:
@@ -1253,8 +1260,6 @@ def create_basic_vars(exported_implemented_functions, forwarded_json, metadata, 
 def create_exports(exported_implemented_functions, in_table, function_table_data, metadata, settings):
   quote = quoter(settings)
   asm_runtime_funcs = create_asm_runtime_funcs(settings)
-  if need_asyncify(exported_implemented_functions):
-    asm_runtime_funcs.append('setAsync')
   all_exported = exported_implemented_functions + asm_runtime_funcs + function_tables(function_table_data, settings)
   if settings['EMULATED_FUNCTION_POINTERS']:
     all_exported += in_table
@@ -1281,10 +1286,6 @@ def create_asm_runtime_funcs(settings):
     funcs += ['setDynamicTop']
   if settings['ONLY_MY_CODE']:
     funcs = []
-  if settings.get('EMTERPRETIFY'):
-    funcs += ['emterpret']
-    if settings.get('EMTERPRETIFY_ASYNC'):
-      funcs += ['setAsyncState', 'emtStackSave', 'emtStackRestore']
   return funcs
 
 
@@ -1599,25 +1600,6 @@ def create_asm_end(exports, settings):
 ''' % (exports,
        'Module' + access_quote('asmGlobalArg'),
        'Module' + access_quote('asmLibraryArg'))
-
-
-def create_runtime_library_overrides(settings):
-  overrides = []
-  if not settings.get('SIDE_MODULE'):
-    overrides += [
-      'stackAlloc',
-      'stackSave',
-      'stackRestore',
-      'establishStackSpace',
-    ]
-    if settings['SAFE_HEAP']:
-      overrides.append('setDynamicTop')
-
-  if not settings['RELOCATABLE']:
-    overrides += ['setTempRet0', 'getTempRet0']
-
-  lines = ["Runtime.{0} = Module['{0}'];".format(func) for func in overrides]
-  return '\n'.join(lines)
 
 
 def create_first_in_asm(settings):
@@ -1995,15 +1977,15 @@ var asm = Module['asm'](%s, %s, buffer);
 STACKTOP = STACK_BASE + TOTAL_STACK;
 STACK_MAX = STACK_BASE;
 HEAP32[%d >> 2] = STACKTOP;
-Runtime.stackAlloc = Module['_stackAlloc'];
-Runtime.stackSave = Module['_stackSave'];
-Runtime.stackRestore = Module['_stackRestore'];
-Runtime.establishStackSpace = Module['establishStackSpace'];
+stackAlloc = Module['_stackAlloc'];
+stackSave = Module['_stackSave'];
+stackRestore = Module['_stackRestore'];
+establishStackSpace = Module['establishStackSpace'];
 ''' % shared.Settings.GLOBAL_BASE)
 
   module.append('''
-Runtime.setTempRet0 = Module['setTempRet0'];
-Runtime.getTempRet0 = Module['getTempRet0'];
+setTempRet0 = Module['setTempRet0'];
+getTempRet0 = Module['getTempRet0'];
 ''')
 
   module.append(invoke_wrappers)
