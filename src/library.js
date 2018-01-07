@@ -640,9 +640,8 @@ LibraryManager.library = {
       ENV['LANG'] = 'C.UTF-8';
       ENV['_'] = Module['thisProgram'];
       // Allocate memory.
-      poolPtr = allocate(TOTAL_ENV_SIZE, 'i8', ALLOC_STATIC);
-      envPtr = allocate(MAX_ENV_VALUES * {{{ Runtime.POINTER_SIZE }}},
-                        'i8*', ALLOC_STATIC);
+      poolPtr = staticAlloc(TOTAL_ENV_SIZE);
+      envPtr = staticAlloc(MAX_ENV_VALUES * {{{ Runtime.POINTER_SIZE }}});
       {{{ makeSetValue('envPtr', '0', 'poolPtr', 'i8*') }}};
       {{{ makeSetValue(makeGlobalUse('_environ'), 0, 'envPtr', 'i8*') }}};
     } else {
@@ -692,7 +691,7 @@ LibraryManager.library = {
     if (!ENV.hasOwnProperty(name)) return 0;
 
     if (_getenv.ret) _free(_getenv.ret);
-    _getenv.ret = allocate(intArrayFromString(ENV[name]), 'i8', ALLOC_NORMAL);
+    _getenv.ret = allocateUTF8(ENV[name]);
     return _getenv.ret;
   },
   clearenv__deps: ['$ENV', '__buildEnvironment'],
@@ -1581,6 +1580,10 @@ LibraryManager.library = {
   llvm_floor_f64: 'Math_floor',
   llvm_round_f32: 'Math_round',
   llvm_round_f64: 'Math_round',
+  llvm_minnum_f32: 'Math_min',
+  llvm_minnum_f64: 'Math_min',
+  llvm_maxnum_f32: 'Math_max',
+  llvm_maxnum_f64: 'Math_max',
 
   llvm_exp2_f32: function(x) {
     return Math.pow(2, x);
@@ -4371,8 +4374,6 @@ LibraryManager.library = {
   llvm_dbg_value: true,
   llvm_debugtrap: true,
   llvm_ctlz_i32: true,
-  llvm_maxnum_f32: true,
-  llvm_maxnum_f64: true,
   emscripten_asm_const: true,
   emscripten_asm_const_int: true,
   emscripten_asm_const_double: true,

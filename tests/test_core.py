@@ -2250,6 +2250,9 @@ The current type of b is: 9
     Settings.ASSERTIONS = 1
     self.do_run(open(path_from_root('tests', 'core', 'stack_overflow.cpp')).read(), 'Stack overflow!')
 
+  def test_stackAlloc(self):
+    self.do_run_in_out_file_test('tests', 'core', 'stackAlloc')
+
   def test_nestedstructs(self):
       src = '''
         #include <stdio.h>
@@ -4553,16 +4556,31 @@ def process(filename):
       self.do_run_from_file(src, out)
 
   def test_fs_errorstack(self):
+    # Enables strict mode, which may catch some strict-mode-only errors
+    # so that users can safely work with strict JavaScript if enabled.
+    post = '''
+def process(filename):
+  src = open(filename, 'r').read()
+  open(filename, 'w').write('"use strict";\\n' + src)
+'''
+
     Settings.FORCE_FILESYSTEM = 1
     self.do_run(r'''
       #include <emscripten.h>
+      #include <iostream>
       int main(void) {
+        std::cout << "hello world\n"; // should work with strict mode
         EM_ASM(
-          FS.write('/dummy.txt', 'homu');
+          try {
+            FS.write('/dummy.txt', 'homu');
+          } catch (err) {
+            err.stack = err.stack; // should be writable
+            throw err;
+          }
         );
         return 0;
       }
-    ''', 'at new ErrnoError', js_engines=[NODE_JS]) # engines has different error stack format
+    ''', 'at Object.write', js_engines=[NODE_JS], post_build=post) # engines has different error stack format
 
   def test_unistd_access(self):
     self.clear()
@@ -6070,12 +6088,12 @@ def process(filename):
     # Kill off the dead function, and check a code path using it aborts
     Settings.DEAD_FUNCTIONS = ['_unused']
     test('*2*')
-    test('abort(-1) at', args=['x'], no_build=True)
+    test('abort(', args=['x'], no_build=True)
 
     # Kill off a library function, check code aborts
     Settings.DEAD_FUNCTIONS = ['_printf']
-    test('abort(-1) at')
-    test('abort(-1) at', args=['x'], no_build=True)
+    test('abort(')
+    test('abort(', args=['x'], no_build=True)
 
   def test_pgo(self):
     if Settings.ASM_JS: return self.skip('PGO does not work in asm mode')
@@ -6323,10 +6341,14 @@ def process(filename):
 
   def test_demangle_stacks(self):
     Settings.DEMANGLE_SUPPORT = 1
+    Settings.ASSERTIONS = 1
     if '-O' in str(self.emcc_args):
       self.emcc_args += ['--profiling-funcs', '--llvm-opts', '0']
-
     self.do_run_in_out_file_test('tests', 'core', 'test_demangle_stacks')
+    if 'ASSERTIONS' not in str(self.emcc_args):
+      print('without assertions, the stack is not printed, but a message suggesting assertions is')
+      Settings.ASSERTIONS = 0
+      self.do_run_in_out_file_test('tests', 'core', 'test_demangle_stacks_noassert')
 
   @no_emterpreter
   @no_wasm_backend('s2wasm does not generate symbol maps')
@@ -7383,7 +7405,7 @@ asm2g = make_run("asm2g", compiler=CLANG, emcc_args=["-O2", "-g", "-s", "ASSERTI
 binaryen0 = make_run("binaryen0", compiler=CLANG, emcc_args=['-O0', '-s', 'BINARYEN=1', '-s', 'BINARYEN_METHOD="native-wasm"'])
 binaryen1 = make_run("binaryen1", compiler=CLANG, emcc_args=['-O1', '-s', 'BINARYEN=1', '-s', 'BINARYEN_METHOD="native-wasm"'])
 binaryen2 = make_run("binaryen2", compiler=CLANG, emcc_args=['-O2', '-s', 'BINARYEN=1', '-s', 'BINARYEN_METHOD="native-wasm"'])
-binaryen3 = make_run("binaryen3", compiler=CLANG, emcc_args=['-O3', '-s', 'BINARYEN=1', '-s', 'BINARYEN_METHOD="native-wasm"', '-s', 'ASSERTIONS=1', "-s", "PRECISE_F32=1"])
+binaryen3 = make_run("binaryen3", compiler=CLANG, emcc_args=['-O3', '-s', 'BINARYEN=1', '-s', 'BINARYEN_METHOD="native-wasm"'])
 binaryens = make_run("binaryens", compiler=CLANG, emcc_args=['-Os', '-s', 'BINARYEN=1', '-s', 'BINARYEN_METHOD="native-wasm"'])
 binaryenz = make_run("binaryenz", compiler=CLANG, emcc_args=['-Oz', '-s', 'BINARYEN=1', '-s', 'BINARYEN_METHOD="native-wasm"'])
 
