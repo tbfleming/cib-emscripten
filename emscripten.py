@@ -1750,14 +1750,26 @@ def emscript_wasm_backend(infile, settings, outfile, libraries=None, compiler_en
 
   staticbump = metadata['staticBump']
   while staticbump % 16 != 0: staticbump += 1
-  pre = pre.replace('STATICTOP = STATIC_BASE + 0;', '''STATICTOP = STATIC_BASE + %d;%s
-/* global initializers */ %s __ATINIT__.push(%s);
-''' % (staticbump,
+  pre = pre.replace('STATICTOP = STATIC_BASE + 0;', '''if(Module["STATICTOP"]) {
+  STATICTOP = Module["STATICTOP"];
+  assert(STATICTOP %% 16 == 0);
+  var STATIC_BUMP = STATICTOP - STATIC_BASE;
+} else {
+  var STATIC_BUMP = %d;
+  STATICTOP = STATIC_BASE + %d;%s
+}
+/* global initializers */ %s {
+  if(Module["callGlobalInitializers"])
+    __ATINIT__.push({ func: Module["callGlobalInitializers"] });
+  else
+    __ATINIT__.push(%s);
+}
+''' % (staticbump, staticbump,
          'assert(STATICTOP < SPLIT_MEMORY, "SPLIT_MEMORY size must be big enough so the entire static memory, need " + STATICTOP);' if settings['SPLIT_MEMORY'] else '',
          'if (!ENVIRONMENT_IS_PTHREAD)' if settings['USE_PTHREADS'] else '',
          global_initializers))
 
-  pre = pre.replace('{{{ STATIC_BUMP }}}', str(staticbump))
+  pre = pre.replace('{{{ STATIC_BUMP }}}', 'STATIC_BUMP')
 
   # merge forwarded data
   settings['EXPORTED_FUNCTIONS'] = forwarded_json['EXPORTED_FUNCTIONS']
